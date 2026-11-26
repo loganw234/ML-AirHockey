@@ -1,0 +1,15 @@
+{
+  "name": "ml-airhockey",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "A small neural network that learns air hockey by neuroevolution, to be played and tweaked in the browser.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "check": "node tools/check.ts",
+    "train": "node tools/train.ts",
+    "summarize": "node tools/summarize.ts"
+  }
+}

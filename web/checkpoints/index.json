@@ -1,0 +1,34 @@
+[
+  {
+    "file": "20261126T140230Z-self-s3-gen-0.json",
+    "label": "Generation 0 (0 s of training): beat the reference bot 0.0%",
+    "run": "20261126T140230Z-self-s3",
+    "gen": 0,
+    "vsRefRate": 0,
+    "confirmRate": null
+  },
+  {
+    "file": "20261126T140230Z-self-s3-gen-257.json",
+    "label": "Generation 257 (45 s of training): beat the reference bot 60.0%",
+    "run": "20261126T140230Z-self-s3",
+    "gen": 257,
+    "vsRefRate": 0.6,
+    "confirmRate": null
+  },
+  {
+    "file": "20261126T140230Z-self-s3-gen-731.json",
+    "label": "Generation 731 (135 s of training): beat the reference bot 10.0%",
+    "run": "20261126T140230Z-self-s3",
+    "gen": 731,
+    "vsRefRate": 0.1,
+    "confirmRate": null
+  },
+  {
+    "file": "20261126T140230Z-self-s3-gen-1141.json",
+    "label": "Generation 1141 (210 s of training): beat the reference bot 75.5%, confirmed",
+    "run": "20261126T140230Z-self-s3",
+    "gen": 1141,
+    "vsRefRate": 0.745,
+    "confirmRate": 0.755
+  }
+]

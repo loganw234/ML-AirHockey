@@ -1,0 +1,34 @@
+run 20261126T135538Z-self-s2: regime self, sizes [10,16,2], pop 96, sigma 0.05, 6 workers, budget 480 s
+gen    0  train    0.3 s  vs ref   0.0% (0-200-0)  vs statue  53%  1.60 M steps/s
+gen   90  train   15.1 s  vs ref   0.0% (0-196-4)  vs statue  76%  2.72 M steps/s
+gen  179  train   30.1 s  vs ref   0.5% (1-187-12)  vs statue   0%  2.71 M steps/s
+gen  269  train   45.1 s  vs ref  60.0% (120-58-22)  vs statue  95%  2.70 M steps/s
+gen  363  train   60.1 s  vs ref  17.0% (34-166-0)  vs statue  68%  2.64 M steps/s
+gen  430  train   75.1 s  vs ref   2.5% (5-189-6)  vs statue  96%  2.10 M steps/s
+gen  506  train   90.1 s  vs ref   2.0% (4-186-10)  vs statue  83%  2.47 M steps/s
+gen  580  train  105.2 s  vs ref   7.5% (15-130-55)  vs statue  70%  2.47 M steps/s
+gen  654  train  120.2 s  vs ref   8.0% (16-152-32)  vs statue  67%  2.48 M steps/s
+gen  740  train  135.1 s  vs ref  50.0% (100-66-34)  vs statue   0%  2.59 M steps/s
+gen  799  train  150.1 s  vs ref  53.5% (107-56-37)  vs statue  92%  1.70 M steps/s
+gen  875  train  165.2 s  vs ref  22.5% (45-108-47)  vs statue   0%  2.44 M steps/s
+gen  952  train  180.1 s  vs ref  61.5% (123-34-43)  vs statue  78%  2.53 M steps/s
+gen 1031  train  195.0 s  vs ref  60.5% (121-38-41)  vs statue  59%  2.54 M steps/s
+gen 1106  train  210.1 s  vs ref  60.0% (120-16-64)  vs statue   0%  2.49 M steps/s
+gen 1181  train  225.0 s  vs ref  55.0% (110-33-57)  vs statue  52%  2.57 M steps/s
+gen 1256  train  240.2 s  vs ref  69.5% (139-32-29)  vs statue  89%  2.52 M steps/s
+gen 1327  train  255.1 s  vs ref  43.5% (87-27-86)  vs statue  86%  2.40 M steps/s
+gen 1403  train  270.1 s  vs ref  71.0% (142-29-29)  vs statue  94%  2.59 M steps/s
+  confirm on 400 fresh seeds: 56.8% (227-87-86)
+gen 1478  train  285.2 s  vs ref  33.5% (67-17-116)  vs statue  94%  2.55 M steps/s
+gen 1555  train  300.2 s  vs ref   2.0% (4-157-39)  vs statue  56%  2.64 M steps/s
+gen 1628  train  315.1 s  vs ref  44.0% (88-65-47)  vs statue  97%  2.51 M steps/s
+gen 1702  train  330.1 s  vs ref  21.0% (42-96-62)  vs statue  78%  2.50 M steps/s
+gen 1776  train  345.1 s  vs ref  51.0% (102-61-37)  vs statue  97%  2.42 M steps/s
+gen 1850  train  360.1 s  vs ref  35.5% (71-72-57)  vs statue  99%  2.48 M steps/s
+gen 1930  train  375.1 s  vs ref  61.5% (123-46-31)  vs statue  99%  2.48 M steps/s
+gen 2007  train  390.1 s  vs ref  74.0% (148-21-31)  vs statue 100%  2.53 M steps/s
+  confirm on 400 fresh seeds: 66.0% (264-58-78)
+gen 2080  train  405.0 s  vs ref  74.0% (148-9-43)  vs statue  96%  2.49 M steps/s
+  confirm on 400 fresh seeds: 75.3% (301-22-77)
+REACHED 70% at gen 2080, 405.02 s of training (confirmed 75.3%)
+recorded in records/runs.jsonl as 20261126T135538Z-self-s2; checkpoints in out/20261126T135538Z-self-s2/

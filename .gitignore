@@ -1,0 +1,4 @@
+# Training output: checkpoints and logs of local runs. The run record itself is records/runs.jsonl, which is kept.
+out/
+node_modules/
+dist/

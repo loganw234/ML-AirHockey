@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ML Air Hockey</title>
+<meta name="description" content="Play air hockey against a small neural network, and change its weights while it plays.">
+<link rel="stylesheet" href="web/style.css">
+</head>
+<body>
+<header class="top">
+  <h1>ML Air Hockey</h1>
+  <p class="sub">A small neural network plays the top end. You play the bottom: move your pointer over the table.</p>
+</header>
+<main class="layout">
+  <section id="play" class="play">
+    <div class="scorebar">
+      <span class="who you">You <b id="score-you">0</b></span>
+      <span id="status" class="status" aria-live="polite"></span>
+      <span class="who ai"><b id="score-ai">0</b> AI</span>
+    </div>
+    <canvas id="table" aria-label="The air hockey table. Your mallet follows your pointer."></canvas>
+    <div class="controls">
+      <button id="pause" type="button">Pause</button>
+      <button id="new" type="button">New match</button>
+      <label class="check"><input type="checkbox" id="show-target" checked> Show where the AI is aiming</label>
+    </div>
+  </section>
+  <section class="brain">
+    <div class="opponent">
+      <label for="opponent">Opponent</label>
+      <select id="opponent"></select>
+      <button id="reroll" type="button">New random weights</button>
+      <input type="file" id="file" accept=".json,application/json" hidden>
+    </div>
+    <div id="net-wrap" class="net-wrap">
+      <svg id="net" role="img" aria-label="The network: its weights as lines and its neurons as circles, live"></svg>
+      <p class="legend">
+        <span class="swatch pos"></span>positive weight
+        <span class="swatch neg"></span>negative weight
+        <span class="muted">· thickness is the weight's size, brightness is what it carries right now, a dashed line is one you changed</span>
+      </p>
+    </div>
+    <p id="no-net" class="note" hidden>This opponent is a script, not a network, so there are no weights to show. Pick a network to see inside it.</p>
+    <div id="inspector" class="inspector"></div>
+    <div id="edits" class="edits"></div>
+  </section>
+</main>
+<script type="module" src="web/main.js"></script>
+</body>
+</html>
