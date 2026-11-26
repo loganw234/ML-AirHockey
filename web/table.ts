@@ -20,7 +20,8 @@ export function readTheme(): Theme {
 
 export interface Overlay {
   aiTarget: [number, number] | null; // where the AI wants its mallet, table coordinates
-  humanTarget: [number, number] | null;
+  humanTarget: [number, number] | null; // the pointer, when a person plays the bottom
+  bottomTarget?: [number, number] | null; // where the bottom player wants its mallet, when it is an AI
   banner: string; // a short message across the centre, or ''
 }
 
@@ -80,12 +81,13 @@ export class TableView {
     const hw = cfg.halfWidth, hl = cfg.halfLength, m = this.margin;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-    // Walls, then the playing surface inside them.
+    // Walls, then the playing surface inside them, its corners as round as the simulator's.
+    const rc = Math.max(cfg.cornerRadius, 0.004);
     ctx.fillStyle = theme.wall;
-    roundRect(ctx, this.X(-hw - m), this.Y(hl + m), (2 * hw + 2 * m) * k, (2 * hl + 2 * m) * k, m * k * 0.9);
+    roundRect(ctx, this.X(-hw - m), this.Y(hl + m), (2 * hw + 2 * m) * k, (2 * hl + 2 * m) * k, (rc + m) * k);
     ctx.fill();
     ctx.fillStyle = theme.felt;
-    roundRect(ctx, this.X(-hw), this.Y(hl), 2 * hw * k, 2 * hl * k, m * k * 0.4);
+    roundRect(ctx, this.X(-hw), this.Y(hl), 2 * hw * k, 2 * hl * k, rc * k);
     ctx.fill();
 
     // Goal mouths: gaps cut in the end walls.
@@ -105,6 +107,7 @@ export class TableView {
     // Where each side is heading.
     if (o.humanTarget) this.ring(o.humanTarget[0], o.humanTarget[1], cfg.malletRadius * 0.5, theme.human, 0.35);
     if (o.aiTarget) this.cross(o.aiTarget[0], o.aiTarget[1], cfg.malletRadius * 0.5, theme.target);
+    if (o.bottomTarget) this.cross(o.bottomTarget[0], o.bottomTarget[1], cfg.malletRadius * 0.5, theme.human);
 
     // Mallets and puck.
     this.mallet(s.x0, s.y0, theme.human);

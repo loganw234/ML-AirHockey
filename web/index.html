@@ -10,29 +10,62 @@
 <body>
 <header class="top">
   <h1>ML Air Hockey</h1>
-  <p class="sub">A small neural network plays the top end. You play the bottom: move your pointer over the table.</p>
+  <p class="sub">A small neural network plays the top end. Play the bottom yourself by moving your pointer over the table, or give the bottom to another player and watch.</p>
 </header>
 <main class="layout">
   <section id="play" class="play">
     <div class="scorebar">
-      <span class="who you">You <b id="score-you">0</b></span>
+      <span class="who you"><span id="bottom-name">You</span> <b id="score-you">0</b></span>
       <span id="status" class="status" aria-live="polite"></span>
       <span class="who ai"><b id="score-ai">0</b> AI</span>
     </div>
     <canvas id="table" aria-label="The air hockey table. Your mallet follows your pointer."></canvas>
     <div class="controls">
       <button id="pause" type="button">Pause</button>
+      <button id="step" type="button" disabled title="Advance one sixtieth of a second while paused">Step</button>
       <button id="new" type="button">New match</button>
       <label class="check"><input type="checkbox" id="show-target" checked> Show where the AI is aiming</label>
     </div>
   </section>
   <section class="brain">
-    <div class="opponent">
-      <label for="opponent">Opponent</label>
-      <select id="opponent"></select>
-      <button id="reroll" type="button">New random weights</button>
-      <input type="file" id="file" accept=".json,application/json" hidden>
+    <div class="players">
+      <label for="opponent">Top player</label>
+      <div class="row">
+        <select id="opponent"></select>
+        <button id="reroll" type="button">New random weights</button>
+        <input type="file" id="file" accept=".json,application/json" hidden>
+      </div>
+      <label for="bottom">Bottom player</label>
+      <div class="row"><select id="bottom"></select></div>
     </div>
+    <details class="settings" open>
+      <summary>Play settings</summary>
+      <div class="settings-grid">
+        <label for="speed">Game speed</label>
+        <select id="speed">
+          <option value="0.1">0.1× (very slow)</option>
+          <option value="0.25">0.25×</option>
+          <option value="0.5">0.5×</option>
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1× (normal)</option>
+          <option value="1.5">1.5×</option>
+        </select>
+        <label for="ai-speed">Top player's speed</label>
+        <div class="range"><input type="range" id="ai-speed" min="0.1" max="1.5" step="0.05" value="1"><output id="ai-speed-out" for="ai-speed">100%</output></div>
+        <label for="you-speed">Bottom player's speed</label>
+        <div class="range"><input type="range" id="you-speed" min="0.1" max="1.5" step="0.05" value="1"><output id="you-speed-out" for="you-speed">100%</output></div>
+        <label for="ai-hz">AI decisions</label>
+        <select id="ai-hz">
+          <option value="60" selected>60 a second (as trained)</option>
+          <option value="30">30 a second</option>
+          <option value="15">15 a second</option>
+          <option value="8">8 a second</option>
+          <option value="4">4 a second</option>
+          <option value="2">2 a second</option>
+        </select>
+      </div>
+      <p class="muted small">Game speed slows everything alike, so the players play exactly as they would, just slower to watch. A player's speed is its mallet's top speed, a handicap on one side. AI decisions applies to every AI on the table. The networks were trained at 100% and 60 decisions a second. <button id="reset-settings" type="button" class="link">Reset</button></p>
+    </details>
     <div id="net-wrap" class="net-wrap">
       <svg id="net" role="img" aria-label="The network: its weights as lines and its neurons as circles, live"></svg>
       <p class="legend">
@@ -40,6 +73,14 @@
         <span class="swatch neg"></span>negative weight
         <span class="muted">· thickness is the weight's size, brightness is what it carries right now, a dashed line is one you changed</span>
       </p>
+      <details class="howto">
+        <summary>How to read the network</summary>
+        <p><b>Left column, the inputs:</b> the ten numbers the AI sees each sixtieth of a second, written beside each one: where the puck is and how it is moving, where its own mallet is, and where the other mallet is. It sees the table from its own end, turned round from yours, so its right is the left of your screen.</p>
+        <p><b>Middle column, the hidden neurons:</b> each adds up every input times the weight on its line, adds a constant of its own (its bias), and squashes the total into the range −1 to +1. Blue circles are positive right now, orange negative, grey near zero. Training made each one pick out a situation, but nobody chose which; picking one shows what it tends to respond to.</p>
+        <p><b>Right column, the outputs:</b> where the AI wants its mallet. Target x runs across the table and target y from its own goal (−1) to the centre line (+1). The cross on the table is that spot; the mallet chases it at its top speed.</p>
+        <p><b>A line</b> is a weight: how strongly one neuron pushes the next. Blue pushes the same way (the next one rises when this one does), orange the opposite way. A thick line has a big weight, and a bright one is carrying a lot at this moment.</p>
+        <p><b>To experiment:</b> pause, pick something, and change it. Each pick says, measured on the last ten seconds of play, how much it moves the AI's aim and which way. Try switching off a hidden neuron, or blinding the AI to the puck's speed, then resume and watch how it plays. Set the bottom player to "the top player as loaded" to watch your edited network play the original.</p>
+      </details>
     </div>
     <p id="no-net" class="note" hidden>This opponent is a script, not a network, so there are no weights to show. Pick a network to see inside it.</p>
     <div id="inspector" class="inspector"></div>

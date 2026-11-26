@@ -19,13 +19,30 @@ The lead's file. It holds Logan's decisions in Logan's own words, with their dat
 5. "Light". *The lead's reading:* a front door, a handful of gates each watched to fail, the fixed reference bot as the yardstick, and a dated record of training runs; no parcel rounds until there are three or more independent pieces.
 6. "Yes and go ahead and delete the folder, it was initially going to be this project folder but ML fit better than AI in my mind." *The lead's reading:* git in this folder, a public GitHub repository under MIT; the empty sibling folder `AIr-hockey` was removed on 2026-11-26. Creating the GitHub repository and each push still go to Logan first.
 
+**2026-11-26, after playing the first page:**
+
+> Commit changes, a couple minor tweaks next. The ref-v1 model frequently gets stuck with the puck in the corner (see attached)
+> Along with that, would it be possible to add a few variables to tweak how the model plays? For example maximum move speed, an overall speed selection to play slower in general etc. Just things to generally make it easier to observe whats going on
+
+*The lead's reading and what was done:* the first commit was made (`fbb99d6`, local, not pushed). The stuck puck was a trap in the table, not only in the bot. Square corners let a puck be pinned against both walls where no mallet could free it. ref-v1 held the puck past the possession limit 2.83 times a match against itself, every time in a corner (MEASURED, 200 matches). The table now has rounded corners (`table-v2`), on which the same bot, unchanged, held it 0.00 times. See [PHASE0.md](PHASE0.md), "The table changed". The page gained play settings: game speed, each side's top speed, how often the AI decides, and a Step button while paused.
+
+**2026-11-26, the same day:**
+
+> One final pass for a couple features, an AI v AI mode, allowing the user to watch the model against itself. The other being a bit more explanation of what each weight roughly does, along with what altering it should do
+
+*What was done:*
+- **A bottom-player choice:** you; the top network itself, sharing every edit; the top network as loaded, without the edits; any ladder generation; or a scripted bot.
+- **Explanations for each pick in the inspector, measured rather than written by hand.** The page keeps the top player's last ten seconds of observations and replays them through the network with and without the change. For a weight it reports which way and how far the aim moves, split by the sign of what the weight carries, and what setting it to zero would do. For a neuron, what it tracks and what switching it off would do. For an input, how much the AI leans on it.
+- **A "How to read the network" guide.**
+- **The `explain` gate** holds the measurement against a network with one known path. Only the meanings of the inputs and outputs are hand-written, and the gate requires one for every name.
+
 ## Standing rules (proposed by the lead, carried from Logan's other projects; not yet confirmed for this one)
 
 - Commit and push only on Logan's word.
 - Before any run on the desktop, `python <repos>/TimeSheet/timesheet.py check desktop --short`; a run of ten minutes or more is booked there first, in the mildest true mode.
 - No personal paths in committed files.
 - Delete only what you created; stop a process by its PID, never by name.
-- The reference bot is the yardstick and is frozen: a change to it is a new version, and runs against the old one stay as they were.
+- The yardstick, meaning the reference bot together with the table and rules, is frozen: a change to either is a new version (`REFERENCE_BOT_VERSION`, `TABLE_VERSION`), and runs against the old one stay as they were.
 
 ## Phases
 

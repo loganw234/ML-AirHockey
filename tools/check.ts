@@ -14,12 +14,12 @@ import { readFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_SIM } from '../src/config.ts';
+import { DEFAULT_SIM, PHASE0_TABLE } from '../src/config.ts';
 import type { SimConfig } from '../src/config.ts';
 import { makeRng } from '../src/rng.ts';
 import { newState, serve, stepWith, step, stateHash, PHASES, NO_GOAL } from '../src/sim.ts';
 import type { State, Phases } from '../src/sim.ts';
-import { observe, decodeTarget, NUM_INPUTS, NUM_OUTPUTS } from '../src/obs.ts';
+import { observe, decodeTarget, NUM_INPUTS, NUM_OUTPUTS, INPUT_NAMES, OUTPUT_NAMES } from '../src/obs.ts';
 import { makeNet, randomGenome, forward, netPolicy, genomeLength } from '../src/net.ts';
 import type { Net } from '../src/net.ts';
 import { referenceForward } from '../src/net_ref.ts';
@@ -33,6 +33,7 @@ import type { Policy } from '../src/policy.ts';
 import { createLiveMatch } from '../web/live.ts';
 import { weightIndex, biasIndex, layerOffset } from '../web/layout.ts';
 import { build } from './build.ts';
+import { ObsBuffer, weightRaise, neuronStats, explainWeight, explainNeuron, explainBias, INPUT_HELP, OUTPUT_HELP } from '../web/explain.ts';
 
 interface Verdict { ok: boolean; code: string; detail: string }
 const pass = (detail: string): Verdict => ({ ok: true, code: 'OK', detail });
@@ -58,7 +59,14 @@ function boundsGate(ph: Phases, cfg: SimConfig = DEFAULT_SIM): Verdict {
   const xMax = cfg.halfWidth - cfg.puckRadius, yMax = cfg.halfLength - cfg.puckRadius;
   const mxMax = cfg.halfWidth - cfg.malletRadius, myFar = cfg.halfLength - cfg.malletRadius, myNear = cfg.malletRadius;
   const o = new Float32Array(NUM_INPUTS), a = new Float32Array(NUM_OUTPUTS), t = new Float64Array(4);
-  let steps = 0, goals = 0, sideWall = 0, touches = 0;
+  let steps = 0, goals = 0, sideWall = 0, touches = 0, onArc = 0;
+  // How far a body of radius r is outside its corner arc (0 when allowed, or when not in a corner square).
+  const rc = cfg.cornerRadius;
+  const arcExcess = (x: number, y: number, r: number): number => {
+    const ax = cfg.halfWidth - rc, ay = cfg.halfLength - rc;
+    if (rc <= r || !(Math.abs(x) > ax && Math.abs(y) > ay)) return 0;
+    return Math.hypot(Math.abs(x) - ax, Math.abs(y) - ay) - (rc - r);
+  };
   const matches = 40;
   for (let m = 0; m < matches; m++) {
     const p0 = players[m % players.length](), p1 = players[(m >> 2) % players.length]();
@@ -76,6 +84,12 @@ function boundsGate(ph: Phases, cfg: SimConfig = DEFAULT_SIM): Verdict {
           return fail('OUT-OF-BOUNDS', `match ${m} step ${k}: puck at (${s.px.toFixed(4)}, ${s.py.toFixed(4)})`);
         }
         if (Math.abs(s.px) >= xMax - 1e-6) sideWall++;
+        const ex = arcExcess(s.px, s.py, cfg.puckRadius);
+        if (ex > EPS) return fail('OUT-OF-CORNER', `match ${m} step ${k}: puck ${ex.toExponential(2)} outside a corner arc at (${s.px.toFixed(4)}, ${s.py.toFixed(4)})`);
+        if (rc > cfg.puckRadius && ex > -1e-6 && Math.abs(s.px) > cfg.halfWidth - rc && Math.abs(s.py) > cfg.halfLength - rc) onArc++;
+      }
+      if (arcExcess(s.x0, s.y0, cfg.malletRadius) > EPS || arcExcess(s.x1, s.y1, cfg.malletRadius) > EPS) {
+        return fail('MALLET-OUT', `match ${m} step ${k}: a mallet is outside a corner arc`);
       }
       if (Math.abs(s.x0) > mxMax + EPS || s.y0 < -myFar - EPS || s.y0 > -myNear + EPS ||
           Math.abs(s.x1) > mxMax + EPS || s.y1 > myFar + EPS || s.y1 < myNear - EPS) {
@@ -87,11 +101,65 @@ function boundsGate(ph: Phases, cfg: SimConfig = DEFAULT_SIM): Verdict {
     touches += s.touches0 + s.touches1;
   }
   // A run in which nothing happened proves nothing.
-  if (goals === 0 || touches === 0 || sideWall === 0) {
-    return fail('VACUOUS', `goals ${goals}, touches ${touches}, side-wall contacts ${sideWall}: the run did not exercise the table`);
+  if (goals === 0 || touches === 0 || sideWall === 0 || (rc > cfg.puckRadius && onArc === 0)) {
+    return fail('VACUOUS', `goals ${goals}, touches ${touches}, side-wall contacts ${sideWall}, steps on a corner arc ${onArc}: the run did not exercise the table`);
   }
-  return pass(`${matches} matches, ${steps} steps, ${goals} goals, ${touches} touches, ${sideWall} steps at a side wall; nothing left the table`);
+  return pass(`${matches} matches, ${steps} steps, ${goals} goals, ${touches} touches, ${sideWall} steps at a side wall, ${onArc} on a corner arc; nothing left the table`);
 }
+
+// The planted fault: the puck is walled as if the corners were square, on a table whose corners are round.
+const squareCorners = (s: State, cfg: SimConfig): number => PHASES.collideWalls(s, { ...cfg, cornerRadius: 0 });
+
+// ---------------------------------------------------------------------------------------------------
+// no-pin: the reference bot playing itself almost never holds the puck in its half past the possession
+// limit. On Phase 0's square corners it did, 2.83 times a match (docs/PHASE0.md): the puck was pinned.
+
+function noPinGate(cfg: SimConfig): Verdict {
+  const opts = { goalsToWin: 3, maxSeconds: 60, cfg };
+  let fouls = 0;
+  const n = 100;
+  for (let k = 0; k < n; k++) {
+    const r = playMatch(referenceBot(cfg), referenceBot(cfg), 8_000_000 + k, opts);
+    fouls += r.fouls0 + r.fouls1;
+  }
+  const perSide = fouls / (2 * n);
+  if (perSide > 0.2) return fail('PINNED', `the reference bot against itself held the puck past the limit ${perSide.toFixed(2)} times a match (allowed 0.2)`);
+  return pass(`the reference bot against itself: ${perSide.toFixed(2)} possession fouls a match over ${n} matches (allowed 0.2)`);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// speed-limit: each mallet keeps to its own top speed, malletMaxSpeed times its scale, and reaches it.
+
+function speedLimitGate(ph: Phases): Verdict {
+  const cfg: SimConfig = { ...DEFAULT_SIM, malletSpeedScale0: 0.5, malletSpeedScale1: 0.25 };
+  const lim0 = cfg.malletMaxSpeed * 0.5 / cfg.controlHz, lim1 = cfg.malletMaxSpeed * 0.25 / cfg.controlHz;
+  const rng = makeRng(37);
+  const o = new Float32Array(NUM_INPUTS), a = new Float32Array(NUM_OUTPUTS), t = new Float64Array(4);
+  let top0 = 0, top1 = 0;
+  for (let m = 0; m < 10; m++) {
+    const p0 = referenceBot(cfg), p1 = referenceBot(cfg);
+    const s = newState(cfg);
+    serveRandom(s, cfg, m % 2 === 0 ? 0 : 1, rng);
+    for (let k = 0; k < 900; k++) {
+      const x0 = s.x0, y0 = s.y0, x1 = s.x1, y1 = s.y1;
+      observe(s, 0, cfg, o); p0(o, a); decodeTarget(cfg, 0, a[0], a[1], t, 0);
+      observe(s, 1, cfg, o); p1(o, a); decodeTarget(cfg, 1, a[0], a[1], t, 2);
+      const g = stepWith(s, t[0], t[1], t[2], t[3], cfg, ph);
+      if (g !== NO_GOAL) { serveRandom(s, cfg, g === 0 ? 1 : 0, rng); continue; }
+      const d0 = Math.hypot(s.x0 - x0, s.y0 - y0), d1 = Math.hypot(s.x1 - x1, s.y1 - y1);
+      if (d0 > lim0 + 1e-12 || d1 > lim1 + 1e-12) {
+        return fail('TOO-FAST-MALLET', `match ${m} step ${k}: mallets moved ${d0.toFixed(5)} and ${d1.toFixed(5)} in a step, limits ${lim0.toFixed(5)} and ${lim1.toFixed(5)}`);
+      }
+      top0 = Math.max(top0, d0); top1 = Math.max(top1, d1);
+    }
+  }
+  if (top0 < 0.95 * lim0 || top1 < 0.95 * lim1) return fail('VACUOUS', `the mallets never neared their limits (${(top0 / lim0).toFixed(2)}, ${(top1 / lim1).toFixed(2)} of them)`);
+  return pass(`at scales 0.5 and 0.25 each mallet kept to its own top speed and reached it`);
+}
+
+// Planted fault: player 1's scale is ignored, and it moves at player 0's.
+const sharedScale: Phases['moveMallets'] = (s, t0x, t0y, t1x, t1y, cfg, dt) =>
+  PHASES.moveMallets(s, t0x, t0y, t1x, t1y, { ...cfg, malletSpeedScale1: cfg.malletSpeedScale0 }, dt);
 
 // The planted fault: the side walls are gone (the end walls and goals are kept).
 function noSideWalls(s: State, cfg: SimConfig): number {
@@ -435,6 +503,47 @@ function liveGate(liveCfg: SimConfig): Verdict {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// explain: the inspector's explanations (web/explain.ts) find a known path through a network, and see
+// nothing where there is none. Every input and output name has its words, and no text says NaN.
+
+function explainGate(idx: WeightIndex): Verdict {
+  const names = (list: readonly string[]) => list as readonly string[];
+  const missing = [...names(INPUT_NAMES).filter((n) => !INPUT_HELP[n]), ...names(OUTPUT_NAMES).filter((n) => !OUTPUT_HELP[n])];
+  const stale = [...Object.keys(INPUT_HELP).filter((n) => !names(INPUT_NAMES).includes(n)), ...Object.keys(OUTPUT_HELP).filter((n) => !names(OUTPUT_NAMES).includes(n))];
+  if (missing.length) return fail('EXPLAIN-MISSING', `no words for ${missing.join(', ')}`);
+  if (stale.length) return fail('EXPLAIN-STALE', `words for names the network no longer has: ${stale.join(', ')}`);
+  // One path only: puck x (input 0) -> hidden 1 -> target x (output 0).
+  const sizes = [NUM_INPUTS, 4, NUM_OUTPUTS];
+  const g = new Float32Array(genomeLength(sizes));
+  g[weightIndex(sizes, 0, 1, 0)] = 1.5;
+  g[weightIndex(sizes, 1, 0, 1)] = 1.5;
+  const net = makeNet(sizes, g);
+  const buf = new ObsBuffer(300, NUM_INPUTS);
+  const rng = makeRng(41);
+  const row = new Float32Array(NUM_INPUTS);
+  for (let k = 0; k < 300; k++) { row.fill(0); row[0] = rng() * 2 - 1; row[3] = rng() * 2 - 1; buf.push(row); }
+  const on = weightRaise(net, buf, 0, 1, 0, 0.5, idx);
+  if (!(on.pos.dx > 0.01 && on.neg.dx < -0.01) || Math.abs(on.pos.dy) > 1e-6 || Math.abs(on.neg.dy) > 1e-6) {
+    return fail('EXPLAIN-WRONG', `raising the weight on the only path moved target x by ${on.pos.dx.toFixed(4)} (puck x positive) and ${on.neg.dx.toFixed(4)} (negative), target y by ${on.pos.dy.toFixed(4)}`);
+  }
+  const offPath = weightRaise(net, buf, 0, 2, 3, 0.5, idx); // input 3 into hidden 2, which reaches no output
+  if (offPath.all.size > 1e-9) return fail('EXPLAIN-WRONG', `a weight on no path moved the aim by ${offPath.all.size}`);
+  const st = neuronStats(net, buf, 1, 1);
+  if (!(st.corr[0] > 0.95) || Math.abs(st.corr[3]) > 0.2) return fail('EXPLAIN-WRONG', `hidden 2 should follow puck x alone; correlations ${st.corr[0].toFixed(2)} and ${st.corr[3].toFixed(2)}`);
+  // Every explanation of this network reads as words.
+  const nodeName = (n: number, j: number) => (n === 0 ? INPUT_NAMES[j] : n === sizes.length - 1 ? OUTPUT_NAMES[j] : `hidden ${j + 1}`);
+  const texts: string[] = [];
+  for (let l = 0; l + 1 < sizes.length; l++) for (let j = 0; j < sizes[l + 1]; j++) for (let i = 0; i < sizes[l]; i++) texts.push(...explainWeight(net, buf, l, j, i, { node: nodeName }));
+  for (let n = 0; n < sizes.length; n++) for (let j = 0; j < sizes[n]; j++) {
+    texts.push(...explainNeuron(net, buf, n, j, { node: nodeName }, false));
+    if (n > 0) texts.push(explainBias(net, buf, n, j, { node: nodeName }));
+  }
+  const bad = texts.find((t) => /NaN|undefined|Infinity/.test(t));
+  if (bad) return fail('EXPLAIN-GARBLED', `an explanation reads: ${bad}`);
+  return pass(`a one-path network's weight moves target x the right way on each side and nothing else; ${texts.length} explanations, none garbled`);
+}
+
+// ---------------------------------------------------------------------------------------------------
 // build: the site builds, and every import in it resolves to a file the build wrote.
 
 function buildGate(opts: { rewrite?: boolean; plant?: Record<string, string> }): Verdict {
@@ -456,7 +565,14 @@ function buildGate(opts: { rewrite?: boolean; plant?: Record<string, string> }):
 // ---------------------------------------------------------------------------------------------------
 
 const CHECKS: Check[] = [
-  { name: 'bounds', gate: () => boundsGate(PHASES), controls: [{ name: 'no-side-walls', expect: 'OUT-OF-BOUNDS', run: () => boundsGate({ ...PHASES, collideWalls: noSideWalls }) }] },
+  {
+    name: 'bounds', gate: () => boundsGate(PHASES), controls: [
+      { name: 'no-side-walls', expect: 'OUT-OF-BOUNDS', run: () => boundsGate({ ...PHASES, collideWalls: noSideWalls }) },
+      { name: 'square-corners', expect: 'OUT-OF-CORNER', run: () => boundsGate({ ...PHASES, collideWalls: squareCorners }) },
+    ],
+  },
+  { name: 'no-pin', gate: () => noPinGate(DEFAULT_SIM), controls: [{ name: 'phase0-square-table', expect: 'PINNED', run: () => noPinGate(PHASE0_TABLE) }] },
+  { name: 'speed-limit', gate: () => speedLimitGate(PHASES), controls: [{ name: 'scale-shared', expect: 'TOO-FAST-MALLET', run: () => speedLimitGate({ ...PHASES, moveMallets: sharedScale }) }] },
   {
     name: 'goals', gate: () => goalsGate(DEFAULT_SIM), controls: [
       { name: 'no-goal-mouth', expect: 'NO-GOAL', run: () => goalsGate({ ...DEFAULT_SIM, goalHalfWidth: 0 }) },
@@ -475,6 +591,7 @@ const CHECKS: Check[] = [
   { name: 'yardstick', gate: () => yardstickGate(tally), controls: [{ name: 'seat-forgotten', expect: 'YARDSTICK-BLIND', run: () => yardstickGate(seatBlindTally) }] },
   { name: 'determinism', gate: () => determinismGate(fixedNet), controls: [{ name: 'unseeded-jitter', expect: 'NONDETERMINISTIC', run: () => determinismGate(jitteryNet) }] },
   { name: 'layout', gate: () => layoutGate(weightIndex), controls: [{ name: 'transposed-index', expect: 'LAYOUT-WRONG', run: () => layoutGate(transposedIndex) }] },
+  { name: 'explain', gate: () => explainGate(weightIndex), controls: [{ name: 'transposed-index', expect: 'EXPLAIN-WRONG', run: () => explainGate(transposedIndex) }] },
   { name: 'live-equals-batch', gate: () => liveGate(DEFAULT_SIM), controls: [{ name: 'possession-drift', expect: 'LIVE-DIVERGES', run: () => liveGate({ ...DEFAULT_SIM, possessionSeconds: DEFAULT_SIM.possessionSeconds + 1 }) }] },
   {
     name: 'build', gate: () => buildGate({}), controls: [

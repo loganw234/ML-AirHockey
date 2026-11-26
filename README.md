@@ -14,14 +14,14 @@ It is a toy, on purpose ("less 'scientific bit exact determinism' and more 'ML t
 
     node tools/check.ts        # or: npm run check
 
-It runs every gate, then each gate's negative control: the same gate against a planted fault, which must fail. Read the last line. `VERDICT: PASS (11 gates, 14 controls)` means everything held. It took 0.9 s on 2026-11-26 on the desktop it was written on. Nothing is cached, and nothing needs installing: Node 22.18 or later runs the TypeScript directly.
+It runs every gate, then each gate's negative control: the same gate against a planted fault, which must fail. Read the last line. `VERDICT: PASS (14 gates, 18 controls)` means everything held. It took 1.1 to 1.4 s on 2026-11-26 on the desktop it was written on. Nothing is cached, and nothing needs installing: Node 22.18 or later runs the TypeScript directly.
 
 ## The page
 
     node tools/serve.ts        # builds into dist/ and serves it at http://127.0.0.1:8770/
     node tools/build.ts        # just the build: dist/ is the static site GitHub Pages will serve
 
-You play the bottom end with your pointer. The opponent is a network from the generation ladder, a random network, a checkpoint file, or one of the scripted bots. The network is drawn beside the table, live. Click a line to change that weight, or a circle to change a neuron's bias or switch it off, and the play changes at once. The ladder is chosen with `node tools/ladder.ts <run id>:<generation> ...`, which copies those checkpoints into `web/checkpoints/` and takes their labels from the run record.
+The top player is a network from the generation ladder, a random network, a checkpoint file, or one of the scripted bots. The bottom is you, with your pointer, or another player to watch: the same network (edits and all), the same network as loaded, a ladder generation, or a bot. The top network is drawn beside the table, live. Click a line to change that weight, or a circle to change a neuron's bias or switch it off, and the play changes at once. Each pick is explained, and the explanation is measured: the page replays the last ten seconds the AI saw through the network with and without the change, and says which way and how far its aim moves. The play settings slow the whole game down, or slow one side's mallet, or make the AI decide less often. Pause and Step move the game on a sixtieth of a second at a time. The ladder is chosen with `node tools/ladder.ts <run id>:<generation> ...`, which copies those checkpoints into `web/checkpoints/` and takes their labels from the run record.
 
 ## Training
 
@@ -33,7 +33,7 @@ Each run appends a line to [records/runs.jsonl](records/runs.jsonl), with the ma
 ## Layout
 
 - `src/`: everything the browser will share. `config.ts` (the table), `sim.ts` (physics), `obs.ts` (what a player sees), `net.ts` (the network), `net_ref.ts` (its slow reference), `bots.ts` (the reference bot and the statue), `match.ts`, `evaluate.ts`, `evolve.ts`, `checkpoint.ts`.
-- `web/`: the page. `live.ts` (a match one step at a time, held against `playMatch`), `table.ts`, `netview.ts`, `layout.ts` (where a weight sits in the genome, held against the forward pass), `main.ts`, and `checkpoints/` (the ladder).
+- `web/`: the page. `live.ts` (a match one step at a time, held against `playMatch`), `table.ts`, `netview.ts`, `layout.ts` (where a weight sits in the genome, held against the forward pass), `explain.ts` (the measured explanations), `main.ts`, and `checkpoints/` (the ladder).
 - `tools/`: Node only. `check.ts` (the front door), `train.ts` and `worker.ts` (the trainer), `summarize.ts`, `ladder.ts`, `build.ts`, `serve.ts`.
 - `docs/`: the roadmap with Logan's decisions in Logan's own words, and the Phase 0 protocol and results.
 

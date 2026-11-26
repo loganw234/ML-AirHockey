@@ -1,10 +1,12 @@
-// The page: you play the bottom end with your pointer, the opponent plays the top, and if the opponent is a
-// network its weights are drawn beside the table, live, and can be changed while it plays.
+// The page: a network or a script plays the top end; the bottom is you, with your pointer, or another
+// player to watch it against. If the top player is a network its weights are drawn beside the table,
+// live, can be changed while it plays, and each one's part is explained from what it has recently seen.
 
 import { DEFAULT_SIM } from '../src/config.ts';
+import type { SimConfig } from '../src/config.ts';
 import { makeRng } from '../src/rng.ts';
 import { observe, decodeTarget, INPUT_NAMES, OUTPUT_NAMES, NUM_INPUTS, NUM_OUTPUTS } from '../src/obs.ts';
-import { makeNet, randomGenome, forward } from '../src/net.ts';
+import { makeNet, randomGenome, forward, netPolicy } from '../src/net.ts';
 import type { Net } from '../src/net.ts';
 import { fromCheckpoint } from '../src/checkpoint.ts';
 import { referenceBot, statueBot, REFERENCE_BOT_VERSION } from '../src/bots.ts';
@@ -15,8 +17,12 @@ import { TableView, readTheme } from './table.ts';
 import { NetView } from './netview.ts';
 import type { Selection } from './netview.ts';
 import { weightIndex, biasIndex } from './layout.ts';
+import { ObsBuffer, explainWeight, explainNeuron, explainBias } from './explain.ts';
 
-const cfg = DEFAULT_SIM;
+// The page's own copy of the table, so the play settings can change the mallets' top speeds while a
+// match runs: the simulator reads it every step. Only the speed scales change; the scales the
+// observation uses (puckMaxSpeed, malletMaxSpeed) stay as the networks were trained.
+const cfg: SimConfig = { ...DEFAULT_SIM };
 const SIZES = [NUM_INPUTS, 16, NUM_OUTPUTS];
 const STEP = 1 / cfg.controlHz;
 
@@ -29,10 +35,18 @@ function byId<T extends HTMLElement>(id: string): T {
 const canvas = byId<HTMLCanvasElement>('table');
 const svg = document.getElementById('net') as unknown as SVGSVGElement;
 const opponentSel = byId<HTMLSelectElement>('opponent');
+const bottomSel = byId<HTMLSelectElement>('bottom');
+const bottomName = byId('bottom-name');
 const rerollBtn = byId<HTMLButtonElement>('reroll');
 const fileInput = byId<HTMLInputElement>('file');
 const pauseBtn = byId<HTMLButtonElement>('pause');
+const stepBtn = byId<HTMLButtonElement>('step');
 const newBtn = byId<HTMLButtonElement>('new');
+const speedSel = byId<HTMLSelectElement>('speed');
+const aiSpeedIn = byId<HTMLInputElement>('ai-speed'), aiSpeedOut = byId<HTMLOutputElement>('ai-speed-out');
+const youSpeedIn = byId<HTMLInputElement>('you-speed'), youSpeedOut = byId<HTMLOutputElement>('you-speed-out');
+const aiHzSel = byId<HTMLSelectElement>('ai-hz');
+const resetSettingsBtn = byId<HTMLButtonElement>('reset-settings');
 const showTarget = byId<HTMLInputElement>('show-target');
 const scoreYou = byId('score-you'), scoreAi = byId('score-ai'), statusEl = byId('status');
 const netWrap = byId('net-wrap'), noNet = byId('no-net'), inspector = byId('inspector'), editsEl = byId('edits');
@@ -45,28 +59,33 @@ const view = new NetView(svg);
 
 type Opponent =
   | { kind: 'net'; net: Net; base: Float32Array; label: string }
-  | { kind: 'script'; policy: Policy; label: string };
+  | { kind: 'script'; make: () => Policy; policy: Policy; label: string };
 
 let opponent: Opponent;
 let rerolls = 0;
 const knocked = new Set<string>(); // "n:j"
 const saved = new Map<number, number>(); // genome index -> its value before a knock-out zeroed it
 let edited = new Set<number>();
+// The top player's last ten seconds of observations, which the explanations are measured on.
+const seen = new ObsBuffer(10 * cfg.controlHz, NUM_INPUTS);
+const seenObs = new Float32Array(NUM_INPUTS);
 
 function useNet(net: Net, label: string): void {
   opponent = { kind: 'net', net, base: new Float32Array(net.genome), label };
-  knocked.clear(); saved.clear(); edited = new Set();
+  knocked.clear(); saved.clear(); edited = new Set(); seen.clear();
   view.setNet(net, INPUT_NAMES, OUTPUT_NAMES);
   netWrap.hidden = false; noNet.hidden = true; rerollBtn.hidden = !label.startsWith('Random');
   showInspector(null);
   newMatch();
+  void chooseBottom(bottomSel.value); // a bottom player that copies the top one follows it
 }
 
-function useScript(policy: Policy, label: string): void {
-  opponent = { kind: 'script', policy, label };
+function useScript(make: () => Policy, label: string): void {
+  opponent = { kind: 'script', make, policy: make(), label };
   netWrap.hidden = true; noNet.hidden = false; rerollBtn.hidden = true;
-  inspector.replaceChildren(); editsEl.replaceChildren();
+  inspector.replaceChildren(); editsEl.replaceChildren(); seen.clear();
   newMatch();
+  void chooseBottom(bottomSel.value);
 }
 
 function randomNet(): void {
@@ -75,8 +94,13 @@ function randomNet(): void {
   useNet(makeNet(SIZES, randomGenome(SIZES, makeRng(seed))), 'Random network (generation 0)');
 }
 
-interface Listed { file: string; label: string }
+interface Listed { file: string; label: string; gen: number }
 let listed: Listed[] = [];
+
+async function fetchListed(k: number): Promise<Net> {
+  const res = await fetch(`web/checkpoints/${listed[k].file}`);
+  return fromCheckpoint(await res.text()).net;
+}
 
 function fillOpponents(): void {
   const opts: [string, string][] = [
@@ -91,18 +115,53 @@ function fillOpponents(): void {
 
 async function chooseOpponent(v: string): Promise<void> {
   if (v === 'random') randomNet();
-  else if (v === 'ref') useScript(referenceBot(cfg), 'Reference bot');
-  else if (v === 'statue') useScript(statueBot(cfg), 'Statue');
+  else if (v === 'ref') useScript(() => referenceBot(cfg), 'Reference bot');
+  else if (v === 'statue') useScript(() => statueBot(cfg), 'Statue');
   else if (v === 'file') fileInput.click();
   else if (v.startsWith('ckpt:')) {
-    const c = listed[Number(v.slice(5))];
-    try {
-      const res = await fetch(`web/checkpoints/${c.file}`);
-      const { net } = fromCheckpoint(await res.text());
-      useNet(net, c.label);
-    } catch (e) { flash(`Could not load it: ${(e as Error).message}`); }
+    const k = Number(v.slice(5));
+    try { useNet(await fetchListed(k), listed[k].label); } catch (e) { flash(`Could not load it: ${(e as Error).message}`); }
   }
 }
+
+// ---- the bottom player -----------------------------------------------------------------------------------
+
+type Bottom = { kind: 'human' } | { kind: 'ai'; policy: Policy; short: string };
+let bottom: Bottom = { kind: 'human' };
+
+function fillBottom(): void {
+  const opts: [string, string][] = [
+    ['you', 'You, with your pointer'],
+    ['same', 'The top player itself, edits and all'],
+    ['original', 'The top player as loaded, without your edits'],
+    ...listed.map((c, k): [string, string] => [`ckpt:${k}`, `Generation ${c.gen} from the ladder`]),
+    ['ref', `Reference bot (${REFERENCE_BOT_VERSION})`],
+    ['statue', 'Statue'],
+  ];
+  bottomSel.replaceChildren(...opts.map(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; return o; }));
+}
+
+async function chooseBottom(v: string): Promise<void> {
+  const ai = (policy: Policy, short: string): Bottom => ({ kind: 'ai', policy, short });
+  if (v === 'you') bottom = { kind: 'human' };
+  else if (v === 'same' || v === 'original') {
+    if (opponent.kind === 'script') bottom = ai(opponent.make(), opponent.label);
+    // A second net over the same genome shares every edit but keeps its own activations, so the drawing
+    // still shows the top player's.
+    else if (v === 'same') bottom = ai(netPolicy(makeNet(opponent.net.sizes, opponent.net.genome)), 'Itself');
+    else bottom = ai(netPolicy(makeNet(opponent.net.sizes, new Float32Array(opponent.base))), 'Unedited');
+  } else if (v === 'ref') bottom = ai(referenceBot(cfg), 'Ref bot');
+  else if (v === 'statue') bottom = ai(statueBot(cfg), 'Statue');
+  else if (v.startsWith('ckpt:')) {
+    const k = Number(v.slice(5));
+    try { bottom = ai(netPolicy(await fetchListed(k)), `Gen ${listed[k].gen}`); } catch (e) { flash(`Could not load it: ${(e as Error).message}`); return; }
+  }
+  bottomName.textContent = bottom.kind === 'human' ? 'You' : bottom.short;
+  canvas.classList.toggle('watching', bottom.kind === 'ai');
+  newMatch();
+}
+
+bottomSel.addEventListener('change', () => { void chooseBottom(bottomSel.value); });
 
 opponentSel.addEventListener('change', () => { void chooseOpponent(opponentSel.value); });
 rerollBtn.addEventListener('click', randomNet);
@@ -179,14 +238,32 @@ function slider(label: string, value: number, base: number, onInput: (v: number)
   return wrap;
 }
 
+// The explanation under the controls, re-measured twice a second while something is picked.
+let explainEl: HTMLElement | null = null;
+let explainAt = 0;
+const names = { node: (n: number, j: number) => view.nodeName(n, j) };
+
+function renderExplain(): void {
+  const sel = view.selection;
+  if (!explainEl || !sel || opponent.kind !== 'net') return;
+  const net = opponent.net;
+  let lines: string[];
+  if (sel.kind === 'weight') lines = explainWeight(net, seen, sel.l, sel.j, sel.i, names, cfg);
+  else {
+    lines = explainNeuron(net, seen, sel.n, sel.j, names, knocked.has(`${sel.n}:${sel.j}`), cfg);
+    if (sel.n > 0) lines.push(explainBias(net, seen, sel.n, sel.j, names, cfg));
+  }
+  explainEl.replaceChildren(...lines.map((t) => { const p = document.createElement('p'); p.textContent = t; return p; }));
+}
+
 function showInspector(sel: Selection | null): void {
-  liveValue = null; liveNeuron = null;
+  liveValue = null; liveNeuron = null; explainEl = null;
   inspector.replaceChildren();
   if (opponent.kind !== 'net') return;
   const { net, base } = opponent;
   if (!sel) {
     const p = document.createElement('p'); p.className = 'hint';
-    p.textContent = 'Click a line to pick a weight, or a circle to pick a neuron. Changes take effect at once, while it plays.';
+    p.textContent = 'Click a line to pick a weight, or a circle to pick a neuron, to see what it does and change it. Changes take effect at once, while it plays.';
     inspector.append(p);
     return;
   }
@@ -217,9 +294,61 @@ function showInspector(sel: Selection | null): void {
       inspector.append(b);
     }
   }
+  const head = document.createElement('h4');
+  head.textContent = 'What it does';
+  explainEl = document.createElement('div');
+  explainEl.className = 'explain';
+  const note = document.createElement('p');
+  note.className = 'muted small';
+  note.textContent = "Measured, not guessed: the page replays what the AI saw in the last ten seconds through the network with and without the change. The AI is at the top, so its right is the left of your screen.";
+  inspector.append(head, explainEl, note);
+  renderExplain();
+  explainAt = performance.now();
 }
 
 view.onSelect = showInspector;
+
+// ---- play settings -----------------------------------------------------------------------------------
+
+interface Settings { speed: number; aiSpeed: number; youSpeed: number; aiHz: number }
+const DEFAULTS: Settings = { speed: 1, aiSpeed: 1, youSpeed: 1, aiHz: cfg.controlHz };
+const SETTINGS_KEY = 'ml-airhockey.settings';
+let settings: Settings = { ...DEFAULTS };
+
+function loadSettings(): void {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) settings = { ...DEFAULTS, ...JSON.parse(raw) };
+  } catch { settings = { ...DEFAULTS }; }
+}
+
+function saveSettings(): void {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* storage may be off; settings still apply */ }
+}
+
+function applySettings(): void {
+  cfg.malletSpeedScale1 = settings.aiSpeed;
+  cfg.malletSpeedScale0 = settings.youSpeed;
+  speedSel.value = String(settings.speed);
+  aiSpeedIn.value = String(settings.aiSpeed);
+  youSpeedIn.value = String(settings.youSpeed);
+  aiHzSel.value = String(settings.aiHz);
+  aiSpeedOut.textContent = `${Math.round(settings.aiSpeed * 100)}%`;
+  youSpeedOut.textContent = `${Math.round(settings.youSpeed * 100)}%`;
+}
+
+function setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
+  if (!Number.isFinite(value) || value <= 0) return;
+  settings[key] = value;
+  applySettings();
+  saveSettings();
+}
+
+speedSel.addEventListener('change', () => setSetting('speed', Number(speedSel.value)));
+aiSpeedIn.addEventListener('input', () => setSetting('aiSpeed', Number(aiSpeedIn.value)));
+youSpeedIn.addEventListener('input', () => setSetting('youSpeed', Number(youSpeedIn.value)));
+aiHzSel.addEventListener('change', () => setSetting('aiHz', Number(aiHzSel.value)));
+resetSettingsBtn.addEventListener('click', () => { settings = { ...DEFAULTS }; applySettings(); saveSettings(); });
 
 // ---- the match ---------------------------------------------------------------------------------------
 
@@ -232,7 +361,7 @@ const obs = new Float32Array(NUM_INPUTS), act = new Float32Array(NUM_OUTPUTS), t
 
 function newMatch(): void {
   match = createLiveMatch((Math.random() * 2 ** 31) >>> 0, cfg);
-  hold = 0; banner = '';
+  hold = 0; banner = ''; sinceDecision = Infinity;
   updateScore();
 }
 
@@ -248,7 +377,16 @@ function flash(text: string): void {
   flashTimer = window.setTimeout(() => { statusEl.textContent = ''; }, 2500);
 }
 
-const BANNERS: Record<LiveEvent, string> = { none: '', goal0: 'Your goal', goal1: 'AI goal', foul0: 'Held too long', foul1: 'AI held too long' };
+function bannerFor(ev: LiveEvent): string {
+  const human0 = bottom.kind === 'human';
+  switch (ev) {
+    case 'goal0': return human0 ? 'Your goal' : 'Bottom scores';
+    case 'goal1': return human0 ? 'AI goal' : 'Top scores';
+    case 'foul0': return human0 ? 'You held it too long' : 'Bottom held it too long';
+    case 'foul1': return 'Top held it too long';
+    default: return '';
+  }
+}
 
 function aiAnswer(): void {
   observe(match.s, 1, cfg, obs);
@@ -257,13 +395,28 @@ function aiAnswer(): void {
   decodeTarget(cfg, 1, act[0], act[1], tgt, 2);
 }
 
+const obs0 = new Float32Array(NUM_INPUTS), act0 = new Float32Array(NUM_OUTPUTS);
+function bottomAnswer(): void {
+  if (bottom.kind !== 'ai') { tgt[0] = human[0]; tgt[1] = human[1]; return; }
+  observe(match.s, 0, cfg, obs0);
+  bottom.policy(obs0, act0);
+  decodeTarget(cfg, 0, act0[0], act0[1], tgt, 0);
+}
+
+// Both AIs decide every step when they run at the training rate, and hold their last targets in between
+// when slowed down. A human's pointer is followed every step.
+let sinceDecision = Infinity;
+
 function tick(): void {
   if (hold > 0) { hold -= STEP; if (hold <= 0) banner = ''; return; }
   match.servePending();
-  aiAnswer();
-  const ev = match.step(human[0], human[1], tgt[2], tgt[3]);
+  observe(match.s, 1, cfg, seenObs);
+  seen.push(seenObs);
+  if (++sinceDecision >= cfg.controlHz / settings.aiHz) { aiAnswer(); if (bottom.kind === 'ai') bottomAnswer(); sinceDecision = 0; }
+  if (bottom.kind === 'human') bottomAnswer();
+  const ev = match.step(tgt[0], tgt[1], tgt[2], tgt[3]);
   if (ev !== 'none') {
-    banner = BANNERS[ev];
+    banner = bannerFor(ev);
     hold = ev.startsWith('goal') ? 1.0 : 0.5;
     updateScore();
   }
@@ -271,18 +424,24 @@ function tick(): void {
 
 canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); human = table.toTable(e.clientX, e.clientY); });
 canvas.addEventListener('pointermove', (e) => { human = table.toTable(e.clientX, e.clientY); });
-pauseBtn.addEventListener('click', () => { paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; });
+pauseBtn.addEventListener('click', () => {
+  paused = !paused;
+  pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  stepBtn.disabled = !paused;
+});
+stepBtn.addEventListener('click', () => { if (paused) tick(); });
 newBtn.addEventListener('click', newMatch);
 
 let last = performance.now(), acc = 0;
 function frame(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  if (!paused) { acc += dt; while (acc >= STEP) { acc -= STEP; tick(); } }
+  if (!paused) { acc += dt * settings.speed; while (acc >= STEP) { acc -= STEP; tick(); } }
   else aiAnswer(); // keep the drawing live while paused, so an edit shows at once
   table.draw(match.s, {
     aiTarget: showTarget.checked ? [tgt[2], tgt[3]] : null,
-    humanTarget: human,
+    humanTarget: bottom.kind === 'human' ? human : null,
+    bottomTarget: bottom.kind === 'ai' && showTarget.checked ? [tgt[0], tgt[1]] : null,
     banner: paused ? 'Paused' : banner,
   });
   if (opponent.kind === 'net') {
@@ -291,6 +450,7 @@ function frame(now: number): void {
       const a = liveNeuron.n === 0 ? obs[liveNeuron.j] : opponent.net.acts[liveNeuron.n - 1][liveNeuron.j];
       liveValue.textContent = `activation now ${a >= 0 ? '+' : '−'}${Math.abs(a).toFixed(3)}`;
     }
+    if (explainEl && now - explainAt > 500) { renderExplain(); explainAt = now; }
   }
   requestAnimationFrame(frame);
 }
@@ -307,11 +467,14 @@ window.addEventListener('resize', fit);
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { table.theme = readTheme(); view.readColors(); });
 
 async function start(): Promise<void> {
+  loadSettings();
+  applySettings();
   try {
     const res = await fetch('web/checkpoints/index.json');
     if (res.ok) listed = await res.json();
   } catch { listed = []; }
   fillOpponents();
+  fillBottom();
   if (listed.length) { opponentSel.value = `ckpt:${listed.length - 1}`; await chooseOpponent(opponentSel.value); }
   else { opponentSel.value = 'random'; randomNet(); }
   fit();

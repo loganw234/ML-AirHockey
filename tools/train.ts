@@ -20,6 +20,7 @@ import { makeRng, hashSeed } from '../src/rng.ts';
 import { randomGenome, makeNet } from '../src/net.ts';
 import { toCheckpoint } from '../src/checkpoint.ts';
 import { REFERENCE_BOT_VERSION } from '../src/bots.ts';
+import { TABLE_VERSION } from '../src/config.ts';
 import { DEFAULT_EVO, planGeneration, breed, hofInsert } from '../src/evolve.ts';
 import type { EvoConfig } from '../src/evolve.ts';
 import { EVAL, evalSeeds, emptyTally, addTally, winRate } from '../src/evaluate.ts';
@@ -188,7 +189,7 @@ async function main(): Promise<void> {
     finishedAt: localIso(finished),
     git: { commit: git(['rev-parse', 'HEAD']), dirty: (git(['status', '--porcelain']) ?? '') !== '' },
     sourceHash,
-    yardstick: { version: REFERENCE_BOT_VERSION, hash: yardstickHash },
+    yardstick: { version: REFERENCE_BOT_VERSION, table: TABLE_VERSION, hash: yardstickHash },
     protocolHash,
     machine: { platform: platform(), release: release(), cpu: cpus()[0]?.model ?? 'unknown', logicalCpus: cpus().length, node: process.version },
     workers: workersN,

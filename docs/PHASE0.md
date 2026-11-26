@@ -51,8 +51,26 @@ All three under one code hash (`sourceHash` `0acf8d9b…`), one yardstick (`ref-
 - **A first evaluation over the bar is not enough.** Run 2 cleared 70% on 200 matches twice before a 400-match confirmation agreed.
 - **The record lost those two failed confirmations, and the lead's trainer was why.** `tools/train.ts` replaced its result object when a run reached the bar, which dropped the failures recorded before it. Run 2's line in `records/runs.jsonl` therefore has none, and the two in the table above are read from the run's console log, kept as `records/logs/20261126T135538Z-self-s2.log` with the other runs' logs. The record is append-only, so that line stays as written. The trainer was fixed the same day, after these runs: failed confirmations are now kept apart from the result and always written.
 
-### What the lead reads in it (BELIEVED, not measured)
+### What the lead reads in the three runs (BELIEVED, not measured)
 
 - The swings are self-play cycling plus a noisy choice of champion. The champion is the best of 96 on 6 short matches each, and half of all opponents are the latest champion, so the population chases whatever beats the last strategy. Not yet tested; each of these would test it: more matches per genome, re-scoring the top few before naming a champion, opponents drawn more evenly from the hall of fame.
 - **For the page this matters more than the time.** A "generation 100 versus generation 1000" ladder of raw champions would sometimes have the later one worse, and a "watch it learn" view would show it getting worse for a minute at a time.
 - **A visitor's browser will be slower** than six workers here. At about 0.4 million steps a second a worker, a four-worker laptop would take about 1.5 times as long, putting these three runs at 5 to 10 minutes. That is an ESTIMATE from this desktop's per-worker rate, and unmeasured in any browser.
+
+### 2026-11-26, later: the table changed (MEASURED unless marked)
+
+Logan saw ref-v1 "frequently gets stuck with the puck in the corner". Measured with the reference bot playing 200 matches against each opponent, counting the bot's own possession fouls a match:
+
+| opponent | square corners (`table-v1`, Phase 0's) | rounded corners (`table-v2`) |
+|---|---|---|
+| the statue | 0.88 | 0.00 |
+| itself | 2.83 | 0.00 |
+| generation 1141 of run s3 | 2.31 | 0.00 |
+
+- **Every one of the 1,160 fouls in the self-play set was the same picture:** the puck dead still in a corner, the mallet parked on it.
+- **A change to the bot did not help, and was dropped.** A bot that backs off and strikes again went from 2.83 to 2.81. In a square corner any strike drives the puck into both walls, and they return it straight at the mallet. *The lead's reading of why, from the geometry, not measured further.*
+- **Rounded corners (`cornerRadius` 0.12) fixed it with the bot unchanged.**
+- **The yardstick changed.** The table is now `table-v2`, recorded in each run as `yardstick.table`, and the yardstick hash changed with it. **Phase 0's three runs were measured on `table-v1` and are not comparable with any later run.**
+- **`PHASE0_TABLE` in `src/config.ts` replays them.** It sets `cornerRadius: 0`, which takes exactly the old code path: the determinism case of seed 42 gives hash 3402543264 under it, as it did before the change.
+- **Generation 1141 still wins on the new table:** 158-42-0 against ref-v1 over the same 200 matches, 79%. It was trained on square corners, and no run has trained on rounded ones yet.
+- **The measurement scripts** were scratch scripts outside the tree, so these figures have no committed script; the `no-pin` gate now holds the "itself" figure, below 0.2 a match on `table-v2` and failing on `PHASE0_TABLE`.

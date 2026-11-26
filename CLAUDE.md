@@ -14,12 +14,14 @@ Read the verdict line, not the exit code: `VERDICT: PASS (<gates> gates, <contro
 
 ## Rules that hold the claims
 
-- **The yardstick is frozen.** `ref-v1` in `src/bots.ts`, with the game (`config.ts`, `sim.ts`, `obs.ts`, `match.ts`) and the evaluation (`evaluate.ts`), make up `yardstick.hash` in every run record. Changing any of them is a new yardstick version. Runs against different hashes are not compared.
+- **The yardstick is frozen.** The reference bot (`src/bots.ts`, `REFERENCE_BOT_VERSION`), the game (`config.ts` with `TABLE_VERSION`, `sim.ts`, `obs.ts`, `match.ts`) and the evaluation (`evaluate.ts`) make up `yardstick.hash` in every run record. Changing how the bot plays bumps its version, and changing the table or the rules bumps `TABLE_VERSION`. Runs against different hashes are not compared. Phase 0 was on `ref-v1` and `table-v1`, the square corners, which `PHASE0_TABLE` replays exactly.
+- **The page may change the mallets' speed scales, nothing else of the physics the networks see.** `malletSpeedScale0/1` handicap a side; the observation's scales (`puckMaxSpeed`, `malletMaxSpeed`) stay as trained, or a network would be fed inputs on a different scale.
 - **The run record is written by `tools/train.ts` only.** `records/runs.jsonl` is append-only; never edit a line, and never delete a failed run. A figure quoted in a document names the run id it came from.
 - **Evaluation seeds are below 2^31; training seeds have the top bit set** (`trainingSeed` in `src/evolve.ts`). Keep them disjoint.
 - **The reference forward pass imports nothing** (`src/net_ref.ts`); the `ref-independent` gate holds it.
 - **`src/` and `web/` must run in a browser**: no `node:` imports there; the build refuses one by name (`BUILD-NODE-IMPORT`). Node-only code goes in `tools/`. `web/live.ts` and `web/layout.ts` touch no DOM, so the front door can hold them.
 - **The page's match rules are written twice** (`src/match.ts` and `web/live.ts`). The `live-equals-batch` gate requires identical matches, state hash included, so change both or the gate fails.
+- **An explanation on the page is measured, never written for a particular network.** `web/explain.ts` replays recent observations through the network with and without a change. The hand-written words are only the meanings of the inputs and outputs (`INPUT_HELP`, `OUTPUT_HELP`), one per name in `src/obs.ts`. The `explain` gate fails on a missing or stale one, so a renamed input needs its words too.
 - **The ladder's labels come from the record.** Change the ladder with `node tools/ladder.ts`, never by editing `web/checkpoints/index.json`.
 - **A checkpoint refuses by name** (`CHECKPOINT-INPUTS` and so on) rather than loading a network onto inputs it was not trained on. If you change `INPUT_NAMES`, old checkpoints stop loading. That is intended.
 

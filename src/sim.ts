@@ -56,29 +56,53 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-// Each mallet heads for its target, clamped to its own half, at no more than malletMaxSpeed.
+// Rounded corners. A body of radius r inside a corner square (|x| > halfWidth - rc and
+// |y| > halfLength - rc) must stay within rc - r of that corner's arc centre. Writes the nearest allowed
+// point to FIL and returns the outward normal's components through FIL[2], FIL[3]; returns false, and
+// writes nothing, when the point is allowed already. A cornerRadius no larger than r changes nothing.
+const FIL = new Float64Array(4);
+function fillet(x: number, y: number, cfg: SimConfig, r: number): boolean {
+  const rc = cfg.cornerRadius;
+  if (rc <= r) return false;
+  const ax = cfg.halfWidth - rc, ay = cfg.halfLength - rc;
+  if (!(Math.abs(x) > ax && Math.abs(y) > ay)) return false;
+  const cx = x > 0 ? ax : -ax, cy = y > 0 ? ay : -ay;
+  const dx = x - cx, dy = y - cy;
+  const d = Math.sqrt(dx * dx + dy * dy), lim = rc - r;
+  if (d <= lim) return false;
+  const nx = dx / d, ny = dy / d;
+  FIL[0] = cx + nx * lim; FIL[1] = cy + ny * lim; FIL[2] = nx; FIL[3] = ny;
+  return true;
+}
+
+// Each mallet heads for its target, clamped to its own half, at no more than its top speed.
 function moveMallets(s: State, t0x: number, t0y: number, t1x: number, t1y: number, cfg: SimConfig, dt: number): void {
   const r = cfg.malletRadius;
   const xMax = cfg.halfWidth - r;
   const yFar = cfg.halfLength - r;
   const yNear = r;
-  const maxStep = cfg.malletMaxSpeed * dt;
+  const maxStep0 = cfg.malletMaxSpeed * cfg.malletSpeedScale0 * dt;
+  const maxStep1 = cfg.malletMaxSpeed * cfg.malletSpeedScale1 * dt;
 
   let tx = clamp(t0x, -xMax, xMax);
   let ty = clamp(t0y, -yFar, -yNear);
   let dx = tx - s.x0;
   let dy = ty - s.y0;
   let d = Math.sqrt(dx * dx + dy * dy);
-  if (d > maxStep) { const k = maxStep / d; dx *= k; dy *= k; }
+  if (d > maxStep0) { const k = maxStep0 / d; dx *= k; dy *= k; }
+  let ox = s.x0, oy = s.y0;
   s.x0 += dx; s.y0 += dy; s.vx0 = dx / dt; s.vy0 = dy / dt;
+  if (fillet(s.x0, s.y0, cfg, r)) { s.x0 = FIL[0]; s.y0 = FIL[1]; s.vx0 = (s.x0 - ox) / dt; s.vy0 = (s.y0 - oy) / dt; }
 
   tx = clamp(t1x, -xMax, xMax);
   ty = clamp(t1y, yNear, yFar);
   dx = tx - s.x1;
   dy = ty - s.y1;
   d = Math.sqrt(dx * dx + dy * dy);
-  if (d > maxStep) { const k = maxStep / d; dx *= k; dy *= k; }
+  if (d > maxStep1) { const k = maxStep1 / d; dx *= k; dy *= k; }
+  ox = s.x1; oy = s.y1;
   s.x1 += dx; s.y1 += dy; s.vx1 = dx / dt; s.vy1 = dy / dt;
+  if (fillet(s.x1, s.y1, cfg, r)) { s.x1 = FIL[0]; s.y1 = FIL[1]; s.vx1 = (s.x1 - ox) / dt; s.vy1 = (s.y1 - oy) / dt; }
 }
 
 function integratePuck(s: State, cfg: SimConfig, dt: number): void {
@@ -136,6 +160,14 @@ function collideWalls(s: State, cfg: SimConfig): number {
   const xMax = cfg.halfWidth - r;
   const yMax = cfg.halfLength - r;
   const e = cfg.wallRestitution;
+  // A rounded corner: the arc is the wall there. The goal mouths are far from the corners.
+  if (fillet(s.px, s.py, cfg, r)) {
+    s.px = FIL[0]; s.py = FIL[1];
+    const nx = FIL[2], ny = FIL[3];
+    const vn = s.pvx * nx + s.pvy * ny;
+    if (vn > 0) { s.pvx -= (1 + e) * vn * nx; s.pvy -= (1 + e) * vn * ny; }
+    return NO_GOAL;
+  }
   if (s.px < -xMax) { s.px = -xMax; if (s.pvx < 0) s.pvx = -s.pvx * e; }
   else if (s.px > xMax) { s.px = xMax; if (s.pvx > 0) s.pvx = -s.pvx * e; }
   if (s.py < -yMax) {
