@@ -1,0 +1,50 @@
+# The front door on every push and pull request, and on main the deploy to GitHub Pages, which runs only
+# once the front door has passed. The site is dist/, built by tools/build.ts from the committed source;
+# nothing built is ever committed. Each deploy carries BUILD, naming the commit it was built from.
+#
+# A cancelled run is not a pass: check that the tip's run finished.
+name: pages
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      # The Node the desktop runs, from one file: it strips the TypeScript itself.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      # Read the verdict line, not the exit code.
+      - name: front door
+        run: |
+          node tools/check.ts 2>&1 | tee check.log
+          grep -q '^VERDICT: PASS' check.log
+      - name: build the site
+        run: |
+          node tools/build.ts --out dist
+          printf 'Deployed from %s\n' "$GITHUB_SHA" > dist/BUILD
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: gate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

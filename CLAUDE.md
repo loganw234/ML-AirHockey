@@ -27,6 +27,15 @@ Read the verdict line, not the exit code: `VERDICT: PASS (<gates> gates, <contro
 - **The ladder's labels come from the record.** Change the ladder with `node tools/ladder.ts`, never by editing `web/checkpoints/index.json`.
 - **A checkpoint refuses by name** (`CHECKPOINT-INPUTS` and so on) rather than loading a network onto inputs it was not trained on. If you change `INPUT_NAMES`, old checkpoints stop loading. That is intended.
 
+## The deploy
+
+Every push to `main` deploys to GitHub Pages (`.github/workflows/pages.yml`):
+1. The front door runs on Node from `.node-version`, and must print `VERDICT: PASS`.
+2. `tools/build.ts` builds `dist/`, and `dist/BUILD` gets the commit's SHA.
+3. The deploy job publishes it.
+
+So a push is a release, and pushes still wait for Logan's word. A cancelled run is not a pass. To see what is live, read `https://loganw234.github.io/ML-AirHockey/BUILD` and compare it with the commit you expect.
+
 ## The genome layout
 
 Per layer, from the input: weights as rows, one row per output neuron (`[out][in]`, row-major), then the layer's biases. `net.ts`'s header is the definition. The explorer must read it the same way; the `net-ref` gate has a control for the transposed reading.

@@ -53,6 +53,15 @@ Then:
 - **The steady method won by the rule fixed before its runs:** 13 drops against 17, and a median of 150 s to a confirmed 70% against 315 s. It is the page's default. It is steadier, not steady: late collapses remain ([STEADY.md](STEADY.md)).
 - **In the browser, once:** the page reached the bar after 4:25 of training, confirmed at 92% on 400 fresh matches ([PHASE0.md](PHASE0.md), "once in a browser").
 
+**2026-11-26, after `76a7912` was pushed:**
+
+> Deploy it to GitHub Pages
+
+*What was done:*
+- GitHub Pages was turned on for the repository, with the workflow as its source.
+- `.github/workflows/pages.yml` runs the front door on every push and pull request. On `main`, once that has passed, it builds `dist/` and deploys it, with `BUILD` naming the commit.
+- The site is https://loganw234.github.io/ML-AirHockey/.
+
 ## Standing rules (proposed by the lead, carried from Logan's other projects; not yet confirmed for this one)
 
 - Commit and push only on Logan's word.

@@ -2,6 +2,8 @@
 
 A small neural network that learns to play air hockey by neuroevolution, meant to be played against and tinkered with in the browser: play any generation, watch it learn from zero, and change its weights while it plays.
 
+**Play it: https://loganw234.github.io/ML-AirHockey/**
+
 It is a toy, on purpose ("less 'scientific bit exact determinism' and more 'ML toy'", [docs/ROADMAP.md](docs/ROADMAP.md)). It keeps a few checks that can fail and a dated record of every training run, so that what it says about itself is something a command can show.
 
 ## Status
@@ -15,7 +17,7 @@ It is a toy, on purpose ("less 'scientific bit exact determinism' and more 'ML t
 - edit the network's weights while it plays, with each part's effect measured and explained;
 - train a network from scratch in the browser. Once, in Chrome on the desktop it was written on, it reached the 70% bar after 4:25 of training, confirmed on 400 fresh matches.
 
-It is not deployed yet.
+**Deployed to GitHub Pages** by `.github/workflows/pages.yml` on every push to `main`. It runs only after the front door passes on its verdict line. The site is built from the committed source, and `BUILD` on the site names the commit it came from.
 
 ## The front door
 
