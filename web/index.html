@@ -38,6 +38,25 @@
       <label for="bottom">Bottom player</label>
       <div class="row"><select id="bottom"></select></div>
     </div>
+    <details class="training" open>
+      <summary>Train a network from scratch</summary>
+      <div class="train-row">
+        <button id="train-start" type="button">Start training</button>
+        <button id="train-reset" type="button" disabled>Start over</button>
+        <label for="train-method">Method</label>
+        <select id="train-method">
+          <option value="steady">Steady: re-scored champions</option>
+          <option value="baseline">Baseline: Phase 0's method</option>
+        </select>
+        <label class="check"><input type="checkbox" id="train-follow" checked> Top player follows the best so far</label>
+      </div>
+      <p id="train-status" class="muted small" aria-live="polite">Starts from random weights and plays itself, many matches at once, in the background of this page. Every 5 seconds of training, the newest champion plays the reference bot 100 times.</p>
+      <svg id="train-chart" role="img" aria-label="Win rate against the reference bot over seconds of training"></svg>
+      <div class="train-row">
+        <button id="train-save" type="button" disabled>Save the best as a file</button>
+        <span class="muted small">Every new best is added to both player menus, so you can play it or set it against an earlier one.</span>
+      </div>
+    </details>
     <details class="settings" open>
       <summary>Play settings</summary>
       <div class="settings-grid">

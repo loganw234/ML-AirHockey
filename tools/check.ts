@@ -34,13 +34,20 @@ import { createLiveMatch } from '../web/live.ts';
 import { weightIndex, biasIndex, layerOffset } from '../web/layout.ts';
 import { build } from './build.ts';
 import { ObsBuffer, weightRaise, neuronStats, explainWeight, explainNeuron, explainBias, INPUT_HELP, OUTPUT_HELP } from '../web/explain.ts';
+import { Trainer, flatten } from '../src/trainer.ts';
+import type { Backend } from '../src/trainer.ts';
+import { handle } from '../src/workerCore.ts';
+import type { PlayReply, EvalReply } from '../src/workerCore.ts';
+import { DEFAULT_EVO, STEADY_EVO } from '../src/evolve.ts';
+import type { EvoConfig } from '../src/evolve.ts';
 
 interface Verdict { ok: boolean; code: string; detail: string }
 const pass = (detail: string): Verdict => ({ ok: true, code: 'OK', detail });
 const fail = (code: string, detail: string): Verdict => ({ ok: false, code, detail });
 
-interface Control { name: string; expect: string; run: () => Verdict }
-interface Check { name: string; gate: () => Verdict; controls: Control[] }
+type Run = () => Verdict | Promise<Verdict>;
+interface Control { name: string; expect: string; run: Run }
+interface Check { name: string; gate: Run; controls: Control[] }
 
 const SIZES = [NUM_INPUTS, 16, NUM_OUTPUTS];
 const EPS = 1e-9;
@@ -544,13 +551,60 @@ function explainGate(idx: WeightIndex): Verdict {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// trainer: the shared training loop (src/trainer.ts) is repeatable, seed for seed, in both of its modes;
+// "steady" re-scores from its second generation on; and the champion always survives into the next
+// population.
+
+function inProcess(noise: boolean): Backend {
+  return {
+    async play(evo, len, pop, hof, tasks) {
+      const r = handle({
+        type: 'play', evo, len, pop: flatten(pop, len), hof: flatten(hof, len),
+        individual: tasks.map((t) => t.individual), oppKind: tasks.map((t) => t.oppKind), oppIndex: tasks.map((t) => t.oppIndex), seed: tasks.map((t) => t.seed),
+      }) as PlayReply;
+      if (noise) for (let k = 0; k < r.fitness.length; k++) r.fitness[k] += Math.random() * 0.01;
+      return r;
+    },
+    async evaluate(sizes, genome, opponent, seeds) {
+      return (handle({ type: 'eval', sizes, genome, opponent, seeds }) as EvalReply).tally;
+    },
+  };
+}
+
+async function trainerGate(backend: () => Backend): Promise<Verdict> {
+  const small: EvoConfig = { ...DEFAULT_EVO, sizes: [NUM_INPUTS, 4, NUM_OUTPUTS], popSize: 12, eliteCount: 2, parentPool: 4, matchesPerEval: 2, trainMaxSeconds: 4 };
+  const modes: [string, EvoConfig][] = [['default', small], ['steady', { ...small, ...STEADY_EVO, rescoreTop: 4, rescoreMatches: 3 }]];
+  const gens = 4;
+  for (const [mode, evo] of modes) {
+    const runs: string[][] = [];
+    for (let rep = 0; rep < 2; rep++) {
+      const t = new Trainer(evo, 5, backend());
+      const champs: string[] = [];
+      for (let g = 0; g < gens; g++) {
+        const out = await t.generation();
+        if (mode === 'steady' && g > 0 && !out.rescored) return fail('TRAINER-INERT', `steady did not re-score at generation ${g}`);
+        if (mode === 'default' && out.rescored) return fail('TRAINER-INERT', 'the default mode re-scored');
+        const bits = (a: Float32Array) => Array.from(new Uint32Array(a.buffer, a.byteOffset, a.length)).join(',');
+        const c = bits(out.champion);
+        if (!t.pop.some((g2) => bits(g2) === c)) return fail('CHAMPION-LOST', `${mode}: generation ${g}'s champion is not in the next population`);
+        champs.push(c);
+      }
+      runs.push(champs);
+    }
+    if (runs[0].some((c, g) => c !== runs[1][g])) return fail('TRAINER-NONDETERMINISTIC', `${mode}: the same seed gave different champions`);
+  }
+  return pass(`${gens} generations in each mode, twice: the same champions both times, re-scoring only in steady, every champion carried over`);
+}
+
+// ---------------------------------------------------------------------------------------------------
 // build: the site builds, and every import in it resolves to a file the build wrote.
 
 function buildGate(opts: { rewrite?: boolean; plant?: Record<string, string> }): Verdict {
   const dir = join(tmpdir(), `ml-airhockey-check-${process.pid}`);
   try {
     const files = build(dir, opts);
-    for (const need of ['index.html', 'web/main.js', 'src/sim.js']) {
+    // web/trainer-worker.js is loaded by URL, not imported, so the import check cannot see it: name it here.
+    for (const need of ['index.html', 'web/main.js', 'src/sim.js', 'web/trainer-worker.js']) {
       if (!files.includes(need)) return fail('BUILD-INCOMPLETE', `the build wrote no ${need}`);
     }
     return pass(`${files.length} files built; every relative import resolves and none names node: or .ts`);
@@ -592,6 +646,7 @@ const CHECKS: Check[] = [
   { name: 'determinism', gate: () => determinismGate(fixedNet), controls: [{ name: 'unseeded-jitter', expect: 'NONDETERMINISTIC', run: () => determinismGate(jitteryNet) }] },
   { name: 'layout', gate: () => layoutGate(weightIndex), controls: [{ name: 'transposed-index', expect: 'LAYOUT-WRONG', run: () => layoutGate(transposedIndex) }] },
   { name: 'explain', gate: () => explainGate(weightIndex), controls: [{ name: 'transposed-index', expect: 'EXPLAIN-WRONG', run: () => explainGate(transposedIndex) }] },
+  { name: 'trainer', gate: () => trainerGate(() => inProcess(false)), controls: [{ name: 'unseeded-fitness', expect: 'TRAINER-NONDETERMINISTIC', run: () => trainerGate(() => inProcess(true)) }] },
   { name: 'live-equals-batch', gate: () => liveGate(DEFAULT_SIM), controls: [{ name: 'possession-drift', expect: 'LIVE-DIVERGES', run: () => liveGate({ ...DEFAULT_SIM, possessionSeconds: DEFAULT_SIM.possessionSeconds + 1 }) }] },
   {
     name: 'build', gate: () => buildGate({}), controls: [
@@ -601,11 +656,11 @@ const CHECKS: Check[] = [
   },
 ];
 
-function safely(f: () => Verdict): Verdict {
-  try { return f(); } catch (e) { return fail('THREW', (e as Error).stack ?? String(e)); }
+async function safely(f: Run): Promise<Verdict> {
+  try { return await f(); } catch (e) { return fail('THREW', (e as Error).stack ?? String(e)); }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   if (process.argv.includes('--list')) {
     for (const c of CHECKS) console.log(`${c.name}: controls ${c.controls.map((k) => k.name).join(', ')}`);
     return;
@@ -615,13 +670,13 @@ function main(): void {
   for (const c of CHECKS) {
     const t = performance.now();
     if (c.controls.length === 0) { console.log(`FAIL  ${c.name}: UNCONTROLLED, a gate with no negative control`); failures++; continue; }
-    const v = safely(c.gate);
+    const v = await safely(c.gate);
     const secs = ((performance.now() - t) / 1000).toFixed(1);
     if (v.ok) console.log(`PASS  ${c.name}: ${v.detail} [${secs} s]`);
     else { console.log(`FAIL  ${c.name}: ${v.code} ${v.detail}`); failures++; }
     for (const k of c.controls) {
       controls++;
-      const r = safely(k.run);
+      const r = await safely(k.run);
       if (r.ok) { console.log(`CONTROL-NOT-DETECTED  ${c.name}/${k.name}: the gate passed with the fault planted: ${r.detail}`); failures++; }
       else if (r.code !== k.expect) { console.log(`CONTROL-WRONG-REASON  ${c.name}/${k.name}: expected ${k.expect}, got ${r.code} ${r.detail}`); failures++; }
       else console.log(`CONTROL-DETECTED  ${c.name}/${k.name}: ${r.code} ${r.detail}`);
@@ -633,4 +688,4 @@ function main(): void {
   process.exitCode = failures === 0 ? 0 : 1;
 }
 
-main();
+void main();

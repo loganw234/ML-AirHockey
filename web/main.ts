@@ -8,8 +8,15 @@ import { makeRng } from '../src/rng.ts';
 import { observe, decodeTarget, INPUT_NAMES, OUTPUT_NAMES, NUM_INPUTS, NUM_OUTPUTS } from '../src/obs.ts';
 import { makeNet, randomGenome, forward, netPolicy } from '../src/net.ts';
 import type { Net } from '../src/net.ts';
-import { fromCheckpoint } from '../src/checkpoint.ts';
+import { fromCheckpoint, toCheckpoint } from '../src/checkpoint.ts';
 import { referenceBot, statueBot, REFERENCE_BOT_VERSION } from '../src/bots.ts';
+import { TABLE_VERSION } from '../src/config.ts';
+import { DEFAULT_EVO, STEADY_EVO } from '../src/evolve.ts';
+import type { EvoConfig } from '../src/evolve.ts';
+import { EVAL } from '../src/evaluate.ts';
+import { TrainingSession, defaultWorkers, PAGE_EVAL } from './training.ts';
+import type { Best } from './training.ts';
+import { drawChart } from './chart.ts';
 import type { Policy } from '../src/policy.ts';
 import { createLiveMatch } from './live.ts';
 import type { LiveMatch, LiveEvent } from './live.ts';
@@ -47,6 +54,10 @@ const aiSpeedIn = byId<HTMLInputElement>('ai-speed'), aiSpeedOut = byId<HTMLOutp
 const youSpeedIn = byId<HTMLInputElement>('you-speed'), youSpeedOut = byId<HTMLOutputElement>('you-speed-out');
 const aiHzSel = byId<HTMLSelectElement>('ai-hz');
 const resetSettingsBtn = byId<HTMLButtonElement>('reset-settings');
+const trainStartBtn = byId<HTMLButtonElement>('train-start'), trainResetBtn = byId<HTMLButtonElement>('train-reset');
+const trainMethodSel = byId<HTMLSelectElement>('train-method'), trainFollow = byId<HTMLInputElement>('train-follow');
+const trainStatus = byId('train-status'), trainSaveBtn = byId<HTMLButtonElement>('train-save');
+const trainChart = document.getElementById('train-chart') as unknown as SVGSVGElement;
 const showTarget = byId<HTMLInputElement>('show-target');
 const scoreYou = byId('score-you'), scoreAi = byId('score-ai'), statusEl = byId('status');
 const netWrap = byId('net-wrap'), noNet = byId('no-net'), inspector = byId('inspector'), editsEl = byId('edits');
@@ -102,19 +113,29 @@ async function fetchListed(k: number): Promise<Net> {
   return fromCheckpoint(await res.text()).net;
 }
 
+// Fill a menu, keeping its current choice when that choice is still offered.
+function fillMenu(sel: HTMLSelectElement, opts: [string, string][]): void {
+  const cur = sel.value;
+  sel.replaceChildren(...opts.map(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; return o; }));
+  if (opts.some(([v]) => v === cur)) sel.value = cur;
+}
+
 function fillOpponents(): void {
-  const opts: [string, string][] = [
+  fillMenu(opponentSel, [
     ['random', 'Random network (generation 0)'],
     ...listed.map((c, k): [string, string] => [`ckpt:${k}`, c.label]),
+    ...(session ? [['training', 'Training here: the best so far, as it improves'] as [string, string]] : []),
+    ...snapshots.map((s, k): [string, string] => [`snap:${k}`, s.label]),
     ['file', 'Load a checkpoint file…'],
     ['ref', `Reference bot (${REFERENCE_BOT_VERSION}, a script)`],
     ['statue', 'Statue (never moves)'],
-  ];
-  opponentSel.replaceChildren(...opts.map(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; return o; }));
+  ]);
 }
 
 async function chooseOpponent(v: string): Promise<void> {
-  if (v === 'random') randomNet();
+  if (v === 'training') { trainFollow.checked = true; if (session?.best) follow(session.best); }
+  else if (v.startsWith('snap:')) { const s = snapshots[Number(v.slice(5))]; useNet(makeNet(SIZES, new Float32Array(s.genome)), s.label); }
+  else if (v === 'random') randomNet();
   else if (v === 'ref') useScript(() => referenceBot(cfg), 'Reference bot');
   else if (v === 'statue') useScript(() => statueBot(cfg), 'Statue');
   else if (v === 'file') fileInput.click();
@@ -130,15 +151,15 @@ type Bottom = { kind: 'human' } | { kind: 'ai'; policy: Policy; short: string };
 let bottom: Bottom = { kind: 'human' };
 
 function fillBottom(): void {
-  const opts: [string, string][] = [
+  fillMenu(bottomSel, [
     ['you', 'You, with your pointer'],
     ['same', 'The top player itself, edits and all'],
     ['original', 'The top player as loaded, without your edits'],
     ...listed.map((c, k): [string, string] => [`ckpt:${k}`, `Generation ${c.gen} from the ladder`]),
+    ...snapshots.map((s, k): [string, string] => [`snap:${k}`, s.label]),
     ['ref', `Reference bot (${REFERENCE_BOT_VERSION})`],
     ['statue', 'Statue'],
-  ];
-  bottomSel.replaceChildren(...opts.map(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; return o; }));
+  ]);
 }
 
 async function chooseBottom(v: string): Promise<void> {
@@ -150,6 +171,9 @@ async function chooseBottom(v: string): Promise<void> {
     // still shows the top player's.
     else if (v === 'same') bottom = ai(netPolicy(makeNet(opponent.net.sizes, opponent.net.genome)), 'Itself');
     else bottom = ai(netPolicy(makeNet(opponent.net.sizes, new Float32Array(opponent.base))), 'Unedited');
+  } else if (v.startsWith('snap:')) {
+    const s = snapshots[Number(v.slice(5))];
+    bottom = ai(netPolicy(makeNet(SIZES, new Float32Array(s.genome))), s.short);
   } else if (v === 'ref') bottom = ai(referenceBot(cfg), 'Ref bot');
   else if (v === 'statue') bottom = ai(statueBot(cfg), 'Statue');
   else if (v.startsWith('ckpt:')) {
@@ -163,7 +187,120 @@ async function chooseBottom(v: string): Promise<void> {
 
 bottomSel.addEventListener('change', () => { void chooseBottom(bottomSel.value); });
 
-opponentSel.addEventListener('change', () => { void chooseOpponent(opponentSel.value); });
+// ---- training in the page ------------------------------------------------------------------------------
+
+interface Snapshot { label: string; short: string; genome: Float32Array; gen: number; rate: number }
+const snapshots: Snapshot[] = [];
+let session: TrainingSession | null = null;
+let trainingNet: Net | null = null; // the top player while it follows training; updated in place
+
+const pct = (r: number) => `${Math.round(100 * r)}%`;
+function clock(s: number): string {
+  const m = Math.floor(s / 60), r = Math.floor(s % 60);
+  return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+function trainingEvo(method: string): EvoConfig {
+  return { ...DEFAULT_EVO, ...(method === 'steady' ? STEADY_EVO : {}), sizes: [...SIZES] };
+}
+
+// Put the best so far on the top end. The first time, it becomes the top player; after that its weights
+// are replaced in place, so the match goes on, and any edits to it are dropped.
+function follow(best: Best): void {
+  if (trainingNet && opponent.kind === 'net' && opponent.net === trainingNet) {
+    if (knocked.size || edited.size) flash('Training found a better network; your edits to the last one were replaced.');
+    knocked.clear(); saved.clear();
+    trainingNet.genome.set(best.genome);
+    opponent.base.set(best.genome);
+    recountEdits();
+    showInspector(view.selection);
+    return;
+  }
+  trainingNet = makeNet(SIZES, new Float32Array(best.genome));
+  useNet(trainingNet, 'Training here: the best so far');
+  opponentSel.value = 'training';
+}
+
+function onBest(best: Best): void {
+  if (!session) return;
+  snapshots.push({
+    label: `Trained here: generation ${best.gen}, ${pct(best.rate)} against the reference bot, ${clock(session.seconds)} in`,
+    short: `Gen ${best.gen}`, genome: new Float32Array(best.genome), gen: best.gen, rate: best.rate,
+  });
+  fillOpponents();
+  fillBottom();
+  if (trainFollow.checked) follow(best);
+}
+
+function renderTraining(): void {
+  if (!session) return;
+  const s = session;
+  const parts = [
+    `${s.running ? 'Training' : 'Paused'} with the ${s.method} method on ${s.pool.workers.length} worker${s.pool.workers.length === 1 ? '' : 's'}: generation ${s.gen}, ${clock(s.seconds)} of training`,
+  ];
+  if (s.stepsPerSecond) parts.push(`${(s.stepsPerSecond / 1e6).toFixed(2)} million simulation steps a second`);
+  if (s.best) parts.push(`best so far ${pct(s.best.rate)} against the reference bot (generation ${s.best.gen}, on ${PAGE_EVAL.matches} matches)`);
+  let text = `${parts.join(' · ')}.`;
+  if (s.reached) text += ` Reached the ${pct(EVAL.bar)} bar after ${clock(s.reached.seconds)} of training: generation ${s.reached.gen}, confirmed at ${pct(s.reached.confirmRate)} on ${EVAL.confirmMatches} fresh matches.`;
+  else if (s.failedConfirms) text += ` ${s.failedConfirms} best${s.failedConfirms === 1 ? '' : 's'} over the bar did not hold up on ${EVAL.confirmMatches} fresh matches.`;
+  if (s.error) text += ` Stopped: ${s.error}`;
+  trainStatus.textContent = text;
+  drawChart(trainChart, s.points, EVAL.bar, s.reached);
+  trainStartBtn.textContent = s.running ? 'Pause training' : 'Resume training';
+  trainSaveBtn.disabled = !s.best;
+}
+
+trainStartBtn.addEventListener('click', () => {
+  if (!session) {
+    const method = trainMethodSel.value;
+    session = new TrainingSession(trainingEvo(method), (Date.now() >>> 0) ^ 0x5eed, defaultWorkers(), method);
+    session.onUpdate = renderTraining;
+    session.onBest = onBest;
+    trainMethodSel.disabled = true;
+    trainResetBtn.disabled = false;
+    fillOpponents();
+  }
+  if (session.running) session.stop(); else session.start();
+  renderTraining();
+});
+
+trainResetBtn.addEventListener('click', () => {
+  if (!session) return;
+  session.dispose();
+  session = null;
+  snapshots.length = 0;
+  trainMethodSel.disabled = false;
+  trainResetBtn.disabled = true;
+  trainSaveBtn.disabled = true;
+  trainStartBtn.textContent = 'Start training';
+  trainStatus.textContent = 'Cleared. Start again from random weights whenever you like.';
+  drawChart(trainChart, [], EVAL.bar, null);
+  fillOpponents();
+  fillBottom();
+});
+
+trainFollow.addEventListener('change', () => {
+  if (trainFollow.checked && session?.best) follow(session.best);
+});
+
+trainSaveBtn.addEventListener('click', () => {
+  if (!session?.best) return;
+  const b = session.best;
+  const json = toCheckpoint(makeNet(SIZES, b.genome), b.gen, {
+    source: 'trained in the page', method: session.method, seed: session.seed, trainSeconds: Math.round(session.seconds),
+    rateVsReference: b.rate, measuredOn: `${PAGE_EVAL.matches} matches against ${REFERENCE_BOT_VERSION} on ${TABLE_VERSION}`,
+  });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  a.download = `airhockey-generation-${b.gen}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+
+opponentSel.addEventListener('change', () => {
+  if (opponentSel.value !== 'training') trainFollow.checked = false; // picking another top player stops following
+  void chooseOpponent(opponentSel.value);
+});
 rerollBtn.addEventListener('click', randomNet);
 fileInput.addEventListener('change', async () => {
   const f = fileInput.files?.[0];
@@ -475,6 +612,7 @@ async function start(): Promise<void> {
   } catch { listed = []; }
   fillOpponents();
   fillBottom();
+  drawChart(trainChart, [], EVAL.bar, null);
   if (listed.length) { opponentSel.value = `ckpt:${listed.length - 1}`; await chooseOpponent(opponentSel.value); }
   else { opponentSel.value = 'random'; randomNet(); }
   fit();

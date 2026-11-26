@@ -57,6 +57,16 @@ All three under one code hash (`sourceHash` `0acf8d9b…`), one yardstick (`ref-
 - **For the page this matters more than the time.** A "generation 100 versus generation 1000" ladder of raw champions would sometimes have the later one worse, and a "watch it learn" view would show it getting worse for a minute at a time.
 - **A visitor's browser will be slower** than six workers here. At about 0.4 million steps a second a worker, a four-worker laptop would take about 1.5 times as long, putting these three runs at 5 to 10 minutes. That is an ESTIMATE from this desktop's per-worker rate, and unmeasured in any browser.
 
+### 2026-11-26, later: once in a browser (MEASURED, one session)
+
+The page's own trainer (`web/training.ts`, the same loop as `tools/train.ts`), with the steady method of [STEADY.md](STEADY.md), on `table-v2` against `ref-v1`. It ran in Chrome in the Claude app's browser pane on this desktop, with 8 Web Workers (`navigator.hardwareConcurrency` 12). The figures were read by the lead from the page's status line, between the TimeSheet check at 08:40 local and the release of the series' booking at 08:45:47, which came after training was paused:
+- the best so far first cleared 70% on 100 matches at 3:50 of training (generation 1473, 75%), and did not hold up on 400 fresh matches;
+- it **reached the bar after 4:25 of training**, at generation 1687, **confirmed at 92% on 400 fresh matches**;
+- the best measured so far was 100% on 100 matches, at generation 1785, 4:40 in;
+- throughput was 3.4 to 3.8 million steps a second, against 1.9 to 2.4 for Node with 6 workers in the same hour's runs.
+
+This is one session, with a seed from the clock, on one fast machine. It is not in `records/runs.jsonl`, because the page writes no record, and it does not make "under five minutes" a rate. It does replace the ESTIMATE above for this desktop: a browser here is faster than the headless runs, not slower. A slower visitor's machine is still unmeasured.
+
 ### 2026-11-26, later: the table changed (MEASURED unless marked)
 
 Logan saw ref-v1 "frequently gets stuck with the puck in the corner". Measured with the reference bot playing 200 matches against each opponent, counting the bot's own possession fouls a match:

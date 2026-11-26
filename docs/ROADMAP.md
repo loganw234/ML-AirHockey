@@ -36,6 +36,23 @@ The lead's file. It holds Logan's decisions in Logan's own words, with their dat
 - **A "How to read the network" guide.**
 - **The `explain` gate** holds the measurement against a network with one known path. Only the meanings of the inputs and outputs are hand-written, and the gate requires one for every name.
 
+**2026-11-26, the same day:**
+
+> Commit and push to remote. Go ahead and create a repo description for github as well. Then we can begin the in browser training and steadier learning
+
+*What was done:* committed as `3e39900`. The public repository `loganw234/ML-AirHockey` was created on GitHub, MIT, with the description below, and pushed. `git ls-remote origin` then showed `refs/heads/main` at `3e39900`, the same as the local `HEAD`.
+
+> A 210-weight neural network that learns air hockey by neuroevolution. Play it in the browser, watch it play itself, and change its weights while it plays, with each weight's effect measured and explained.
+
+Then:
+- **One training loop for Node and the page** (`src/trainer.ts`, `src/workerCore.ts`).
+- **The steadier-learning comparison**, under a protocol written before its runs: [STEADY.md](STEADY.md).
+- **Training in the page.**
+
+*Results, the same day:*
+- **The steady method won by the rule fixed before its runs:** 13 drops against 17, and a median of 150 s to a confirmed 70% against 315 s. It is the page's default. It is steadier, not steady: late collapses remain ([STEADY.md](STEADY.md)).
+- **In the browser, once:** the page reached the bar after 4:25 of training, confirmed at 92% on 400 fresh matches ([PHASE0.md](PHASE0.md), "once in a browser").
+
 ## Standing rules (proposed by the lead, carried from Logan's other projects; not yet confirmed for this one)
 
 - Commit and push only on Logan's word.

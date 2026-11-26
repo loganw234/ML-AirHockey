@@ -109,6 +109,18 @@ button:disabled, input:disabled { opacity: 0.5; cursor: default; }
 .players select { min-width: 0; max-width: 100%; }
 canvas#table.watching { cursor: default; }
 
+.training { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; }
+.training summary { font-weight: 600; cursor: pointer; }
+.train-row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-top: 10px; }
+.train-row label { font-size: 14px; color: var(--muted); }
+svg#train-chart { display: block; width: 100%; height: auto; margin-top: 6px; }
+svg#train-chart .grid { stroke: var(--border); stroke-width: 1; }
+svg#train-chart .bar { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 5 4; }
+svg#train-chart .axis { font: 11px system-ui, sans-serif; fill: var(--muted); }
+svg#train-chart .dot { fill: var(--muted); fill-opacity: 0.6; }
+svg#train-chart .best { fill: none; stroke: var(--accent); stroke-width: 2; }
+svg#train-chart .reached { stroke: var(--human); stroke-width: 1.5; stroke-dasharray: 2 3; }
+
 .howto { margin-top: 10px; font-size: 14px; }
 .howto summary { cursor: pointer; color: var(--accent); }
 .howto p { margin: 8px 0 0; }
